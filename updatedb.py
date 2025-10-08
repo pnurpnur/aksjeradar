@@ -4,6 +4,7 @@ import requests
 import pandas as pd
 from bs4 import BeautifulSoup
 from datetime import datetime, timezone
+from io import StringIO
 
 DB_PATH = "aksjeradar.db"
 
@@ -99,6 +100,26 @@ def get_finviz(category="ta_topgainers"):
         print(f"[Finviz] Feil: {e}")
         return []
 
+def get_finviz_top(category="ta_topgainers"):
+    url = f"https://finviz.com/screener.ashx?v=111&s={category}"
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/127.0.0.1 Safari/537.36"
+    }
+
+    try:
+        response = requests.get(url, headers=headers)
+        tables = pd.read_html(StringIO(response.text))
+        if not tables:
+            return []
+        df = tables[-2]  # Tabellen med aksjer
+        return df["Ticker"].tolist()
+    except Exception as e:
+        print(f"[Finviz] Feil: {e}")
+        return []
+
 # -------------------------
 # 4️⃣ Kombiner alle kilder
 # -------------------------
@@ -107,9 +128,10 @@ def get_all_tickers():
     yahoo_US = get_trending_yahoo()
     yahoo_CA = get_trending_yahoo("CA")
     yahoo_GB = get_trending_yahoo("GB")
-    finviz = get_finviz()
+    finviz_top = get_finviz_top("ta_topgainers")
+    finviz_active = get_finviz_top("ta_mostactive")
 
-    all_tickers = set(existing + yahoo_US + yahoo_CA + yahoo_GB + finviz)
+    all_tickers = set(existing + yahoo_US + yahoo_CA + yahoo_GB + finviz_top + finviz_active)
     all_tickers = [t for t in all_tickers if t.isalpha()]  # kun bokstaver (fjerner rare symboler)
     print(f"Totalt {len(all_tickers)} tickere (inkludert eksisterende og trendende).")
     return all_tickers

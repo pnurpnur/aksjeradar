@@ -1,7 +1,9 @@
+import pandas as pd
 import requests
 import sqlite3
 import yfinance as yf
 from datetime import datetime, timezone
+from io import StringIO
 
 # Koble til database (lager aksjeradar.db hvis den ikke finnes)
 conn = sqlite3.connect("aksjeradar.db")
@@ -28,7 +30,7 @@ CREATE TABLE IF NOT EXISTS stock_data (
     targetHigh REAL,
     marketcap REAL,
     name TEXT,
-    PRIMARY KEY (ticker, timestamp)
+    PRIMARY KEY (ticker)
 )
 """)
 conn.commit()
@@ -71,25 +73,91 @@ def update_ticker(ticker, ts):
     )
     cur.execute("""
         INSERT OR REPLACE INTO stock_data
-        (ticker, timestamp, pe, pb, debt_to_equity, dividend_yield, mom_1d, mom_1y, mom_1m, mom_3m, target, targetLow, targetHigh, price, marketcap, name)
+        (ticker, timestamp, pe, pb, debt_to_equity, dividend_yield, mom_1d, mom_1y, mom_1m, mom_3m, price, target, targetLow, targetHigh, marketcap, name)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, data)
     conn.commit()
 
+"""Returnerer en liste med tickere som allerede ligger i databasen."""
+cur.execute("SELECT DISTINCT ticker FROM stock_data;")
+tickers = [row[0] for row in cur.fetchall()]
+print(f"📊 Fant {len(tickers)} tickere i databasen.")
+
 def get_trending_tickers(region="US"):
     url = f"https://query1.finance.yahoo.com/v1/finance/trending/{region}"
-    r = requests.get(url)
-    print(r.json)
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/127.0.0.1 Safari/537.36"
+    }
+
+    r = requests.get(url, headers=headers)
+    r.raise_for_status()
     data = r.json()
-    tickers = [item["symbol"] for item in data["finance"]["result"][0]["quotes"]]
-    return tickers
+
+    try:
+        result = data["finance"]["result"]
+        for res in result:
+            quotes = res.get("quotes", [])
+            for q in quotes:
+                if "symbol" in q and q["symbol"].isalpha and not '-' in q["symbol"]:
+                    parts = q["symbol"].split('.', 1)  # Split only at the first occurrence of '.'
+                    return [parts[0]]
+    except (KeyError, IndexError) as e:
+        print("JSON-struktur uventet:", e)
+        return []
+
+def get_finviz_top(category="ta_topgainers"):
+    url = f"https://finviz.com/screener.ashx?v=111&s={category}"
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/127.0.0.1 Safari/537.36"
+    }
+
+    try:
+        response = requests.get(url, headers=headers)
+        tables = pd.read_html(StringIO(response.text))
+        if not tables:
+            return []
+        df = tables[-2]  # Tabellen med aksjer
+        return df["Ticker"].tolist()
+    except Exception as e:
+        print(f"[Finviz] Feil: {e}")
+        return []
+
+def get_stocktwits_trending():
+    url = "https://api.stocktwits.com/api/2/trending/symbols.json"
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "Referer": "https://stocktwits.com/",
+            "Origin": "https://stocktwits.com"
+        }
+
+        r = requests.get(url, headers=headers, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        return [s["symbol"] for s in data.get("symbols", [])]
+    except Exception as e:
+        print(f"[StockTwits] Feil: {e}")
+        return []
 
 # ---- LISTE MED TICKERE ----
+#tickers = []
+tickers += get_trending_tickers("US")
+tickers += get_trending_tickers("CA")
+tickers += get_trending_tickers("GB")
+tickers += get_finviz_top("ta_topgainers")
+tickers += get_finviz_top("ta_mostactive")
 
-tickers = get_trending_tickers("US")
+unique = list(dict.fromkeys(tickers));
 
 ts = datetime.now(timezone.utc).isoformat()
-for t in tickers:
+for t in unique:
     update_ticker(t, ts)
 
 conn.close()
