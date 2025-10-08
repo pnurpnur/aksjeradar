@@ -2,7 +2,11 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import yfinance as yf
-import json
+import base64
+
+# Les logo og konverter til base64
+with open("logo.png", "rb") as f:
+    logo_b64 = base64.b64encode(f.read()).decode("utf-8")
 
 DB_PATH = "aksjeradar.db"
 
@@ -35,7 +39,17 @@ def load_stock_data():
 
 # --- App setup ---
 st.set_page_config(page_title="Aksjeradar", layout="wide")
-st.title("📊 Aksjeradar")
+
+# Bruk inline base64-bilde i tittelen
+st.markdown(
+    f"""
+    <div style="display:flex; align-items:center; gap:10px;">
+        <img src="data:image/png;base64,{logo_b64}" width="40">
+        <h1 style="margin:0;">Aksjeradar</h1>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 df = load_stock_data()
 
