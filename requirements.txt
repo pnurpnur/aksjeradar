@@ -1,2 +1,2 @@
 yfinance
-st_aggrid
+streamlit_aggrid
