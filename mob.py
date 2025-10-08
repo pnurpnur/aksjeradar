@@ -37,14 +37,25 @@ def load_stock_data():
 
     return df
 
-
 # --- App setup ---
 st.set_page_config(page_title="Aksjeradar", layout="centered", initial_sidebar_state="collapsed")
+
+# --- CSS styling ---
+st.markdown("""
+    <style>
+    .header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 25px;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 # Bruk inline base64-bilde i tittelen
 st.markdown(
     f"""
-    <div style={{ display: flex, align-items: center, gap: 10px, font-size: 25px }}>
+    <div class="header">
         <img src="data:image/png;base64,{logo_b64}" width="40">
         Aksjeradar
     </div>
