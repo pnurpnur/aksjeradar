@@ -28,7 +28,7 @@ def load_stock_data():
     df = df.drop(columns=["pe", "debt_to_equity", "dividend_yield", "marketcap", "timestamp"], errors="ignore")
 
     # Sorter etter targetPercent
-    df = df.sort_values(by="targetPercent", ascending=False)
+    df = df.sort_values(by="mom_1m", ascending=False)
 
     # Avrund tall
     for col in ["price", "target", "targetLow", "targetHigh", "pb", "mom_1d", "mom_1m", "mom_3m", "mom_1y", "targetPercent"]:
@@ -73,15 +73,14 @@ st.caption("Trykk på en rad for å vise detaljer nedenfor 👇")
 
 # Velg kolonner som skal vises
 columns = [
-    "ticker", "name", "price", "target", "targetLow", "targetHigh",
-    "pb", "mom_1d", "mom_1m", "mom_3m", "mom_1y", "targetPercent"
+    "ticker", "name", "price", "target", "mom_1m", "mom_3m", "mom_1y", "targetPercent"
 ]
 df_display = df[columns].copy()
 
 # Bygg AgGrid-oppsett
 gb = GridOptionsBuilder.from_dataframe(df_display)
 gb.configure_selection("single", use_checkbox=False)
-gb.configure_pagination(enabled=True, paginationAutoPageSize=False, paginationPageSize=10)
+gb.configure_pagination(enabled=True, paginationAutoPageSize=True, paginationPageSize=10)
 
 # Fargekod targetPercent
 cell_style_jscode = """
