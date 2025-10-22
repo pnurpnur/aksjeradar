@@ -1,4 +1,4 @@
 yfinance
 pandas
-sqlite3
+sqlite
 json
