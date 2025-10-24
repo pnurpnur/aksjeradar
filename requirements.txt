@@ -1,2 +1,4 @@
+google-cloud-storage
 yfinance
 pandas
+lxml
