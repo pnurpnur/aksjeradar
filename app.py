@@ -2,154 +2,184 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import yfinance as yf
-import json
 
 DB_PATH = "aksjeradar.db"
+PAGE_SIZE = 10
 
-# --- Hent data fra databasen ---
+
+# -------------------------
+# Database
+# -------------------------
+def delete_ticker(ticker: str):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM stock_data WHERE ticker = ?", (ticker,))
+    conn.commit()
+    conn.close()
+    load_stock_data.clear()
+
+
+# -------------------------
+# Data
+# -------------------------
 @st.cache_data(ttl=600)
 def load_stock_data():
     conn = sqlite3.connect(DB_PATH)
     df = pd.read_sql("SELECT * FROM stock_data", conn)
     conn.close()
 
-    # Fjern rader uten pris
-    df = df[df["price"].notnull()]
+    df = df[df["price"].notnull()].copy()
 
-    # Beregn targetPercent
     df["targetPercent"] = ((df["target"] - df["price"]) / df["price"]) * 100
 
-    # Fjern uønskede kolonner
-    df = df.drop(columns=["pe", "debt_to_equity", "dividend_yield", "marketcap", "timestamp"], errors="ignore")
+    df["TradingView"] = df["ticker"].apply(
+        lambda t: f"https://www.tradingview.com/symbols/{t}/?timeframe=12M"
+    )
 
-    # Sorter etter targetPercent
-    df = df.sort_values(by="targetPercent", ascending=False)
+    df = df.drop(
+        columns=["pe", "debt_to_equity", "dividend_yield", "marketcap", "timestamp"],
+        errors="ignore"
+    )
 
-    # Avrund tall
-    for col in ["price", "target", "targetLow", "targetHigh", "pb", "mom_1d", "mom_1m", "mom_3m", "mom_1y", "targetPercent"]:
+    for col in [
+        "price", "target", "targetLow", "targetHigh", "pb",
+        "mom_1d", "mom_1m", "mom_3m", "mom_1y", "targetPercent"
+    ]:
         if col in df.columns:
-            df[col] = df[col].round(2)
+            df[col] = pd.to_numeric(df[col], errors="coerce").round(2)
 
-    return df
+    return df.reset_index(drop=True)
 
 
-# --- App setup ---
+# -------------------------
+# App setup
+# -------------------------
 st.set_page_config(page_title="Aksjeradar", layout="wide")
 st.title("📊 Aksjeradar")
 
 df = load_stock_data()
 
-# --- State og paginering ---
 if "page" not in st.session_state:
     st.session_state.page = 1
 if "selected_ticker" not in st.session_state:
     st.session_state.selected_ticker = None
 
-page_size = 10
-num_pages = (len(df) - 1) // page_size + 1
-start = (st.session_state.page - 1) * page_size
-end = start + page_size
-df_page = df.iloc[start:end].reset_index(drop=True)
 
-#st.subheader(f"Toppliste — side {st.session_state.page}/{num_pages}")
-st.caption("Klikk på en ticker for å vise detaljer nedenfor 👇")
+# -------------------------
+# Sortering (global)
+# -------------------------
+c1, c2 = st.columns([3, 1])
 
-# --- CSS styling ---
-st.markdown("""
-    <style>
-    .stock-table th {
-        /*background-color: #f5f5f5;*/
-        padding: 6px;
-        text-align: left;
-        border: 0;
-        width: 7%;
-    }
-    .stock-table th.name {
-        width: 21%;
-    }
-    .stock-table td {
-        padding: 6px;
-    }
-    .stock-row:hover {
-        background-color: #f0f8ff;
-    }
-    </style>
-""", unsafe_allow_html=True)
+with c1:
+    sort_by = st.selectbox(
+        "Sorter etter",
+        df.columns,
+        index=df.columns.get_loc("targetPercent")
+    )
 
-# --- Vis tabell ---
-st.markdown("<table class='stock-table' width='100%'><thead><tr>"
-            "<th>Ticker</th><th class='name'>Navn</th><th>Pris</th><th>Target</th>"
-            "<th>Low</th><th>High</th><th>P/B</th><th>1D</th><th>1M</th>"
-            "<th>3M</th><th>1Y</th><th>Target %</th>"
-            "</tr></thead><tbody>", unsafe_allow_html=True)
+with c2:
+    ascending = st.toggle("Stigende", value=False)
+
+df = df.sort_values(sort_by, ascending=ascending, na_position="last")
+
+
+# -------------------------
+# Paginering
+# -------------------------
+num_pages = max(1, (len(df) - 1) // PAGE_SIZE + 1)
+start = (st.session_state.page - 1) * PAGE_SIZE
+end = start + PAGE_SIZE
+df_page = df.iloc[start:end]
+
+
+# -------------------------
+# Tabell (rad for rad)
+# -------------------------
+st.markdown("### Aksjer")
+
+header = st.columns([2, 3, 1, 1, 1, 1, 1, 1])
+header[0].markdown("**Ticker**")
+header[1].markdown("**Navn**")
+header[2].markdown("**Pris**")
+header[3].markdown("**Target %**")
+header[4].markdown("**1M %**")
+header[5].markdown("**1Y %**")
+header[6].markdown("**TV**")
+header[7].markdown("**🗑️**")
 
 for _, row in df_page.iterrows():
-    color = "green" if row["targetPercent"] > 0 else "red" if row["targetPercent"] < 0 else "black"
-    cols = st.columns([1, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])
+    cols = st.columns([2, 3, 1, 1, 1, 1, 1, 1])
 
-    # Første kolonne = knapp
-    with cols[0]:
-        if st.button(row["ticker"], key=f"ticker_{row['ticker']}"):
-            st.session_state.selected_ticker = row["ticker"]
+    # Klikkbar ticker = detaljer
+    if cols[0].button(row["ticker"], key=f"sel_{row['ticker']}"):
+        st.session_state.selected_ticker = row["ticker"]
 
-    # De andre kolonnene = tekst
     cols[1].write(row.get("name", ""))
     cols[2].write(row["price"])
-    cols[3].write(row["target"])
-    cols[4].write(row["targetLow"])
-    cols[5].write(row["targetHigh"])
-    cols[6].write(row["pb"])
-    cols[7].write(f"{row['mom_1d']:+.2f}%")
-    cols[8].write(f"{row['mom_1m']:+.2f}%")
-    cols[9].write(f"{row['mom_3m']:+.2f}%")
-    cols[10].write(f"{row['mom_1y']:+.2f}%")
-    cols[11].markdown(f"<span style='color:{color}; font-weight:bold'>{row['targetPercent']:+.2f}%</span>", unsafe_allow_html=True)
+    cols[3].write(row["targetPercent"])
+    cols[4].write(row.get("mom_1m"))
+    cols[5].write(row.get("mom_1y"))
 
-st.markdown("</tbody></table>", unsafe_allow_html=True)
+    cols[6].link_button("📈", row["TradingView"])
 
-# --- Paginering ---
-col_prev, col_mid, col_next = st.columns([1, 2, 1])
-with col_prev:
-    if st.session_state.page > 1:
-        if st.button("◀️ Forrige", key="forrige"):
-            st.session_state.page -= 1
+    if cols[7].button("🗑️", key=f"del_{row['ticker']}"):
+        delete_ticker(row["ticker"])
+        if st.session_state.selected_ticker == row["ticker"]:
             st.session_state.selected_ticker = None
+        st.rerun()
+
+
+# -------------------------
+# Paginering-knapper
+# -------------------------
+p1, p2, p3 = st.columns([1, 2, 1])
+
+with p1:
+    if st.session_state.page > 1:
+        if st.button("◀️ Forrige"):
+            st.session_state.page -= 1
             st.rerun()
-with col_mid:
-    st.markdown(f"<div style='text-align:center; color:gray;'>Side {st.session_state.page} av {num_pages}</div>", unsafe_allow_html=True)
-with col_next:
+
+with p2:
+    st.markdown(
+        f"<div style='text-align:center;color:gray;'>Side {st.session_state.page} av {num_pages}</div>",
+        unsafe_allow_html=True
+    )
+
+with p3:
     if st.session_state.page < num_pages:
         if st.button("Neste ▶️"):
             st.session_state.page += 1
-            st.session_state.selected_ticker = None
             st.rerun()
 
-# --- Detaljvisning ---
+
+# -------------------------
+# Detaljer
+# -------------------------
 ticker = st.session_state.selected_ticker
 if ticker:
     st.markdown("---")
-    st.header(f"📈 Detaljer for {ticker}")
+    st.header(f"📈 {ticker}")
 
     try:
         tk = yf.Ticker(ticker)
         info = tk.info
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            st.markdown(f"### {info.get('longName', ticker)}")
+
+        c1, c2 = st.columns([1, 1])
+
+        with c1:
+            st.subheader(info.get("longName", ticker))
             st.write(f"**Sektor:** {info.get('sector', '-')}")
             st.write(f"**Bransje:** {info.get('industry', '-')}")
             st.write(f"**Markedsverdi:** {info.get('marketCap', 0):,}")
             st.write(f"**P/E:** {info.get('trailingPE', '-')}")
             st.write(f"**P/B:** {info.get('priceToBook', '-')}")
-            st.write(f"**Børs:** {info.get('fullExchangeName', '-')}")
-            st.write(f"**Summary:** {info.get('longBusinessSummary', '-')}")
+            st.write(info.get("longBusinessSummary", ""))
 
-        with col2:
-            st.write("### Kurs siste år")
+        with c2:
             hist = tk.history(period="1y")
             if not hist.empty:
                 st.line_chart(hist["Close"])
-            else:
-                st.info("Ingen historiske data tilgjengelig.")
+
     except Exception as e:
         st.error(f"Kunne ikke hente data for {ticker}: {e}")
