@@ -6,6 +6,8 @@ import yfinance as yf
 DB_PATH = "aksjeradar.db"
 PAGE_SIZE = 10
 
+if "confirm_delete" not in st.session_state:
+    st.session_state.confirm_delete = None
 
 # -------------------------
 # Database
@@ -14,6 +16,10 @@ def delete_ticker(ticker: str):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.execute("DELETE FROM stock_data WHERE ticker = ?", (ticker,))
+    cur.execute(
+        "INSERT OR IGNORE INTO deleted_tickers (ticker) VALUES (?)",
+        (ticker,)
+    )
     conn.commit()
     conn.close()
     load_stock_data.clear()
@@ -122,11 +128,19 @@ for _, row in df_page.iterrows():
 
     cols[6].link_button("📈", row["TradingView"])
 
-    if cols[7].button("🗑️", key=f"del_{row['ticker']}"):
-        delete_ticker(row["ticker"])
-        if st.session_state.selected_ticker == row["ticker"]:
-            st.session_state.selected_ticker = None
-        st.rerun()
+    ticker = row["ticker"]
+
+    if st.session_state.confirm_delete == ticker:
+        if cols[7].button("❌ Bekreft", key=f"confirm_{ticker}"):
+            delete_ticker(ticker)
+            st.session_state.confirm_delete = None
+            if st.session_state.selected_ticker == ticker:
+                st.session_state.selected_ticker = None
+            st.rerun()
+    else:
+        if cols[7].button("🗑️", key=f"del_{ticker}"):
+            st.session_state.confirm_delete = ticker
+            st.rerun()
 
 
 # -------------------------
@@ -183,3 +197,21 @@ if ticker:
 
     except Exception as e:
         st.error(f"Kunne ikke hente data for {ticker}: {e}")
+
+st.markdown("---")
+st.subheader("🔄 Lokal synk")
+
+if st.button("Synk slettede tickere lokalt"):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute("""
+        DELETE FROM stock_data
+        WHERE ticker IN (SELECT ticker FROM deleted_tickers)
+    """)
+
+    affected = cur.rowcount
+    conn.commit()
+    conn.close()
+
+    st.success(f"Synket {affected} slettede tickere lokalt")
