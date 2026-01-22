@@ -6,32 +6,34 @@ import yfinance as yf
 DB_PATH = "aksjeradar.db"
 PAGE_SIZE = 10
 
-if "confirm_delete" not in st.session_state:
-    st.session_state.confirm_delete = None
+def get_conn():
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    return conn
 
 # -------------------------
-# Database
+# Skjul ticker
 # -------------------------
-def delete_ticker(ticker: str):
-    conn = sqlite3.connect(DB_PATH)
+def hide_ticker_in_app(ticker: str):
+    conn = get_conn()
     cur = conn.cursor()
-    cur.execute("DELETE FROM stock_data WHERE ticker = ?", (ticker,))
-    cur.execute(
-        "INSERT OR IGNORE INTO deleted_tickers (ticker) VALUES (?)",
-        (ticker,)
-    )
+    cur.execute("UPDATE stock_data SET hidden = 1 WHERE ticker = ?", (ticker,))
     conn.commit()
     conn.close()
-    load_stock_data.clear()
 
+# -------------------------
+# Streamlit state
+# -------------------------
+if "confirm_delete" not in st.session_state:
+    st.session_state.confirm_delete = None
 
 # -------------------------
 # Data
 # -------------------------
 @st.cache_data(ttl=600)
 def load_stock_data():
-    conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql("SELECT * FROM stock_data", conn)
+    conn = get_conn()
+    df = pd.read_sql("SELECT * FROM stock_data WHERE hidden IS NULL OR hidden = 0", conn)
     conn.close()
 
     df = df[df["price"].notnull()].copy()
@@ -56,7 +58,6 @@ def load_stock_data():
 
     return df.reset_index(drop=True)
 
-
 # -------------------------
 # App setup
 # -------------------------
@@ -70,24 +71,16 @@ if "page" not in st.session_state:
 if "selected_ticker" not in st.session_state:
     st.session_state.selected_ticker = None
 
-
 # -------------------------
 # Sortering (global)
 # -------------------------
 c1, c2 = st.columns([3, 1])
-
 with c1:
-    sort_by = st.selectbox(
-        "Sorter etter",
-        df.columns,
-        index=df.columns.get_loc("targetPercent")
-    )
-
+    sort_by = st.selectbox("Sorter etter", df.columns, index=df.columns.get_loc("targetPercent"))
 with c2:
     ascending = st.toggle("Stigende", value=False)
 
 df = df.sort_values(sort_by, ascending=ascending, na_position="last")
-
 
 # -------------------------
 # Paginering
@@ -97,12 +90,10 @@ start = (st.session_state.page - 1) * PAGE_SIZE
 end = start + PAGE_SIZE
 df_page = df.iloc[start:end]
 
-
 # -------------------------
-# Tabell (rad for rad)
+# Tabell
 # -------------------------
 st.markdown("### Aksjer")
-
 header = st.columns([2, 3, 1, 1, 1, 1, 1, 1])
 header[0].markdown("**Ticker**")
 header[1].markdown("**Navn**")
@@ -125,14 +116,14 @@ for _, row in df_page.iterrows():
     cols[3].write(row["targetPercent"])
     cols[4].write(row.get("mom_1m"))
     cols[5].write(row.get("mom_1y"))
-
     cols[6].link_button("📈", row["TradingView"])
 
     ticker = row["ticker"]
 
     if st.session_state.confirm_delete == ticker:
         if cols[7].button("❌ Bekreft", key=f"confirm_{ticker}"):
-            delete_ticker(ticker)
+            hide_ticker_in_app(ticker)
+            st.cache_data.clear()
             st.session_state.confirm_delete = None
             if st.session_state.selected_ticker == ticker:
                 st.session_state.selected_ticker = None
@@ -142,30 +133,25 @@ for _, row in df_page.iterrows():
             st.session_state.confirm_delete = ticker
             st.rerun()
 
-
 # -------------------------
 # Paginering-knapper
 # -------------------------
 p1, p2, p3 = st.columns([1, 2, 1])
-
 with p1:
     if st.session_state.page > 1:
         if st.button("◀️ Forrige"):
             st.session_state.page -= 1
             st.rerun()
-
 with p2:
     st.markdown(
         f"<div style='text-align:center;color:gray;'>Side {st.session_state.page} av {num_pages}</div>",
         unsafe_allow_html=True
     )
-
 with p3:
     if st.session_state.page < num_pages:
         if st.button("Neste ▶️"):
             st.session_state.page += 1
             st.rerun()
-
 
 # -------------------------
 # Detaljer
@@ -178,7 +164,6 @@ if ticker:
     try:
         tk = yf.Ticker(ticker)
         info = tk.info
-
         c1, c2 = st.columns([1, 1])
 
         with c1:
@@ -197,21 +182,3 @@ if ticker:
 
     except Exception as e:
         st.error(f"Kunne ikke hente data for {ticker}: {e}")
-
-st.markdown("---")
-st.subheader("🔄 Lokal synk")
-
-if st.button("Synk slettede tickere lokalt"):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-
-    cur.execute("""
-        DELETE FROM stock_data
-        WHERE ticker IN (SELECT ticker FROM deleted_tickers)
-    """)
-
-    affected = cur.rowcount
-    conn.commit()
-    conn.close()
-
-    st.success(f"Synket {affected} slettede tickere lokalt")

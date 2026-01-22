@@ -8,35 +8,36 @@ from io import StringIO
 
 DB_PATH = "aksjeradar.db"
 
-#conn = sqlite3.connect(DB_PATH)
-#cursor = conn.cursor()
-#cursor.execute("DROP TABLE stock_data")
-#conn.commit()
+def get_conn():
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    return conn
 
 # -------------------------
 # 1️⃣ Hent eksisterende tickere
 # -------------------------
 def get_existing_tickers():
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("CREATE TABLE IF NOT EXISTS stock_data ( \
-        ticker TEXT PRIMARY KEY, \
-        timestamp TEXT, \
-        pe REAL, \
-        pb REAL, \
-        debt_to_equity REAL, \
-        dividend_yield REAL, \
-        mom_1d REAL, \
-        mom_1y REAL, \
-        mom_1m REAL, \
-        mom_3m REAL, \
-        price REAL, \
-        target REAL, \
-        targetLow REAL, \
-        targetHigh REAL, \
-        marketcap REAL, \
-        name TEXT \
-    )")
+    cursor.execute("""CREATE TABLE IF NOT EXISTS stock_data (
+        ticker TEXT PRIMARY KEY,
+        timestamp TEXT,
+        pe REAL,
+        pb REAL,
+        debt_to_equity REAL,
+        dividend_yield REAL,
+        mom_1d REAL,
+        mom_1y REAL,
+        mom_1m REAL,
+        mom_3m REAL,
+        price REAL,
+        target REAL,
+        targetLow REAL,
+        targetHigh REAL,
+        marketcap REAL,
+        name TEXT,
+        hidden INTEGER DEFAULT 0  -- NY: skjult flagg, 0 = synlig, 1 = skjult
+    )""")
     conn.commit()
     cursor.execute("SELECT ticker FROM stock_data")
     rows = cursor.fetchall()
@@ -167,11 +168,11 @@ def calculate_momentum(ticker):
         return None, None, None, None, None
 
 # -------------------------
-# 5️⃣ Hent data fra yfinance og oppdater DB
+# 6️⃣ Hent data fra yfinance og oppdater DB
 # -------------------------
 def update_database():
     tickers = get_all_tickers()
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn()
     cursor = conn.cursor()
     ts = datetime.now(timezone.utc)
 
@@ -201,15 +202,32 @@ def update_database():
                 info.get("targetHighPrice"),
                 info.get("marketCap"),
                 info.get("shortName", "")
+                # NY: hidden beholdes via INSERT OR REPLACE, vi setter ikke den her
             )
 
             cursor.execute("""
-                INSERT OR REPLACE INTO stock_data
-                (ticker, timestamp, pe, pb, debt_to_equity, dividend_yield,
-                 mom_1d, mom_1y, mom_1m, mom_3m, price, target, targetLow,
-                 targetHigh, marketcap, name)
+                INSERT INTO stock_data (ticker, timestamp, pe, pb, debt_to_equity, dividend_yield,
+                    mom_1d, mom_1y, mom_1m, mom_3m, price, target, targetLow,
+                    targetHigh, marketcap, name)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, data)
+                ON CONFLICT(ticker) DO UPDATE SET
+                    timestamp=excluded.timestamp,
+                    pe=excluded.pe,
+                    pb=excluded.pb,
+                    debt_to_equity=excluded.debt_to_equity,
+                    dividend_yield=excluded.dividend_yield,
+                    mom_1d=excluded.mom_1d,
+                    mom_1y=excluded.mom_1y,
+                    mom_1m=excluded.mom_1m,
+                    mom_3m=excluded.mom_3m,
+                    price=excluded.price,
+                    target=excluded.target,
+                    targetLow=excluded.targetLow,
+                    targetHigh=excluded.targetHigh,
+                    marketcap=excluded.marketcap,
+                    name=excluded.name
+                    -- NY: hidden endres IKKE
+            """)
 
             print(f"✅ Oppdatert {t}")
 
@@ -221,7 +239,7 @@ def update_database():
     print("✅ Ferdig oppdatert database.")
 
 # -------------------------
-# 6️⃣ Kjør skriptet
+# 7️⃣ Kjør skriptet
 # -------------------------
 if __name__ == "__main__":
     update_database()
