@@ -39,7 +39,7 @@ def get_existing_tickers():
         hidden INTEGER DEFAULT 0  -- NY: skjult flagg, 0 = synlig, 1 = skjult
     )""")
     conn.commit()
-    cursor.execute("SELECT ticker FROM stock_data")
+    cursor.execute("SELECT ticker FROM stock_data WHERE hidden = 0")
     rows = cursor.fetchall()
     conn.close()
     return [r[0] for r in rows]
@@ -227,7 +227,7 @@ def update_database():
                     marketcap=excluded.marketcap,
                     name=excluded.name
                     -- NY: hidden endres IKKE
-            """)
+            """, data)
 
             print(f"✅ Oppdatert {t}")
 
